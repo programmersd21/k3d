@@ -127,6 +127,27 @@ pub fn render(
                     .normalize_or_zero();
             }
         }
+        let flat_color = if mode == RenderMode::Flat {
+            let n_dot_l = face.dot(light).max(0.0);
+            let ambient = 0.24;
+            let diffuse = 0.68 * n_dot_l;
+            let specular = if n_dot_l > 0.0 {
+                let half = (light + view_dir).normalize_or_zero();
+                let dot = face.dot(half).max(0.0);
+                let d2 = dot * dot;
+                let d4 = d2 * d2;
+                let d8 = d4 * d4;
+                let d16 = d8 * d8;
+                let d32 = d16 * d16;
+                asset.material.specular * d32
+            } else {
+                0.0
+            };
+            base * (ambient + diffuse) + Vec3::splat(specular)
+        } else {
+            Vec3::ZERO
+        };
+
         let dx0 = p[2].x - p[1].x;
         let dy0 = p[2].y - p[1].y;
         let dx1 = p[0].x - p[2].x;
@@ -165,28 +186,39 @@ pub fn render(
                     }
                     let at = row_offset + x;
                     if d < fb.depth[at] {
-                        let normal = if mode == RenderMode::Flat {
-                            face
-                        } else {
-                            (vertex_normals[0] * w0
-                                + vertex_normals[1] * w1
-                                + vertex_normals[2] * w2)
-                                .normalize_or_zero()
-                        };
-                        let n_dot_l = normal.dot(light).max(0.0);
-                        let ambient = 0.24;
-                        let diffuse = 0.68 * n_dot_l;
-                        let specular = if n_dot_l > 0.0 {
-                            let half = (light + view_dir).normalize_or_zero();
-                            asset.material.specular * normal.dot(half).max(0.0).powf(32.0)
-                        } else {
-                            0.0
-                        };
                         let color = match mode {
                             RenderMode::Unlit | RenderMode::Wireframe => base,
                             RenderMode::Depth => Vec3::splat(1.0 - d),
-                            RenderMode::Normals => normal * 0.5 + Vec3::splat(0.5),
-                            _ => base * (ambient + diffuse) + Vec3::splat(specular),
+                            RenderMode::Normals => {
+                                let normal = (vertex_normals[0] * w0
+                                    + vertex_normals[1] * w1
+                                    + vertex_normals[2] * w2)
+                                    .normalize_or_zero();
+                                normal * 0.5 + Vec3::splat(0.5)
+                            }
+                            RenderMode::Flat => flat_color,
+                            _ => {
+                                let normal = (vertex_normals[0] * w0
+                                    + vertex_normals[1] * w1
+                                    + vertex_normals[2] * w2)
+                                    .normalize_or_zero();
+                                let n_dot_l = normal.dot(light).max(0.0);
+                                let ambient = 0.24;
+                                let diffuse = 0.68 * n_dot_l;
+                                let specular = if n_dot_l > 0.0 {
+                                    let half = (light + view_dir).normalize_or_zero();
+                                    let dot = normal.dot(half).max(0.0);
+                                    let d2 = dot * dot;
+                                    let d4 = d2 * d2;
+                                    let d8 = d4 * d4;
+                                    let d16 = d8 * d8;
+                                    let d32 = d16 * d16;
+                                    asset.material.specular * d32
+                                } else {
+                                    0.0
+                                };
+                                base * (ambient + diffuse) + Vec3::splat(specular)
+                            }
                         };
                         let col = [
                             (color.x.clamp(0., 1.) * 255.) as u8,
