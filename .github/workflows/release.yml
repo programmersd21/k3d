@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: linux release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: check out
+        uses: actions/checkout@v4
+
+      - name: install rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: verify
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test --all-targets
+
+      - name: build
+        run: cargo build --release
+
+      - name: package
+        run: |
+          staging="k3d-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          mkdir "$staging"
+          cp target/release/k3d README.md LICENSE "$staging/"
+          tar -czf "$staging.tar.gz" "$staging"
+          sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256"
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "k3d-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz" \
+            "k3d-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz.sha256" \
+            --title "k3d ${GITHUB_REF_NAME}" \
+            --generate-notes
