@@ -22,6 +22,9 @@ use std::{
 
 pub fn run(cli: Cli) -> anyhow::Result<()> {
     let pal = theme::palette(cli.theme);
+    if let Some(path) = &cli.model {
+        eprintln!("k3d: loading {}", path.display());
+    }
     let mut asset = cli
         .model
         .as_ref()
@@ -65,6 +68,11 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         cli.mode
     };
     let mut background = cli.background;
+    let mut term_w = 0u16;
+    let mut term_h = 0u16;
+    let mut pixel_width = 0usize;
+    let mut pixel_height = 0usize;
+    let mut size_dirty = true;
     let mut angle = 0.0f32;
     let mut drag: Option<(MouseButton, u16, u16)> = None;
     let mut dirty = true;
@@ -131,7 +139,10 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
                     MouseEventKind::Up(_) => drag = None,
                     _ => {}
                 },
-                Event::Resize(_, _) => dirty = true,
+                Event::Resize(_, _) => {
+                    dirty = true;
+                    size_dirty = true;
+                }
                 _ => {}
             }
         }
@@ -153,23 +164,28 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             angle += dt * 0.75;
         }
 
-        let (w, h) = terminal::size()?;
+        if size_dirty {
+            let (w, h) = terminal::size()?;
+            term_w = w;
+            term_h = h;
+            let window = terminal::window_size()?;
+            pixel_width = if window.width == 0 {
+                term_w as usize * 8
+            } else {
+                window.width as usize
+            };
+            pixel_height = if window.height == 0 {
+                term_h as usize * 16
+            } else {
+                window.height as usize
+            };
+            size_dirty = false;
+        }
+
         let scale = cli.scale.clamp(0.1, 2.0);
-        let window = terminal::window_size()?;
-        let pixel_width = if window.width == 0 {
-            w as usize * 8
-        } else {
-            window.width as usize
-        };
-        let pixel_height = if window.height == 0 {
-            h as usize * 16
-        } else {
-            window.height as usize
-        };
-        fb.resize(
-            (pixel_width as f32 * scale) as usize,
-            (pixel_height as f32 * scale) as usize,
-        );
+        let fb_w = ((pixel_width as f32 * scale) as usize).min(1024);
+        let fb_h = ((pixel_height as f32 * scale) as usize).min(768);
+        fb.resize(fb_w, fb_h);
 
         renderer::render(
             &asset,
@@ -184,7 +200,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             },
         );
 
-        presenter.present(&fb, w, h)?;
+        presenter.present(&fb, term_w, term_h)?;
         draw_overlay(&asset, &fb, stats, help, mode);
         io::stdout().flush()?;
         dirty = false;

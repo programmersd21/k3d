@@ -4,6 +4,7 @@ use crate::{
 };
 use glam::Vec3;
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{BufRead, BufReader},
     path::Path,
@@ -90,20 +91,12 @@ fn obj(path: &Path, color: Vec3) -> Result<Asset, K3dError> {
     let mut line = String::new();
     let mut p = Vec::new();
     let mut idx = Vec::new();
-    let mut face_number = 0usize;
-    let mut sampling_step = 1usize;
     while reader.read_line(&mut line).map_err(|e| K3dError::Model {
         path: path.display().to_string(),
         reason: e.to_string(),
     })? > 0
     {
         let l = line.trim_start();
-        if let Some(count) = l
-            .strip_prefix("#Face Count ")
-            .and_then(|s| s.trim().parse::<usize>().ok())
-        {
-            sampling_step = count.div_ceil(MAX_OBJ_TRIANGLES).max(1);
-        }
         let mut w = l.split_whitespace();
         match w.next() {
             Some("v") => {
@@ -123,11 +116,6 @@ fn obj(path: &Path, color: Vec3) -> Result<Asset, K3dError> {
                 p.push(Vec3::from_array(a));
             }
             Some("f") => {
-                face_number += 1;
-                if !face_number.is_multiple_of(sampling_step) {
-                    line.clear();
-                    continue;
-                }
                 let a: Vec<i64> = w
                     .take(64)
                     .filter_map(|x| x.split('/').next()?.parse().ok())
@@ -156,9 +144,6 @@ fn obj(path: &Path, color: Vec3) -> Result<Asset, K3dError> {
             }
             _ => {}
         }
-        if idx.len() / 3 >= MAX_OBJ_TRIANGLES {
-            break;
-        }
         line.clear();
     }
     if p.is_empty() || idx.is_empty() {
@@ -174,6 +159,9 @@ fn obj(path: &Path, color: Vec3) -> Result<Asset, K3dError> {
         indices: idx,
     };
     compact(&mut m);
+    if m.triangle_count() > MAX_OBJ_TRIANGLES {
+        m = simplify(&m);
+    }
     m.normalize();
     m.recalculate_normals();
     Ok(Asset {
@@ -189,6 +177,65 @@ fn obj(path: &Path, color: Vec3) -> Result<Asset, K3dError> {
             .to_string_lossy()
             .into(),
     })
+}
+
+fn simplify(mesh: &Mesh) -> Mesh {
+    for grid in [64, 48, 32, 24, 16] {
+        let simplified = simplify_grid(mesh, grid);
+        if simplified.triangle_count() <= MAX_OBJ_TRIANGLES {
+            return simplified;
+        }
+    }
+    simplify_grid(mesh, 12)
+}
+
+fn simplify_grid(mesh: &Mesh, grid: i32) -> Mesh {
+    let mut min = mesh.positions[0];
+    let mut max = min;
+    for &p in &mesh.positions[1..] {
+        min = min.min(p);
+        max = max.max(p);
+    }
+    let extent = (max - min).max(Vec3::splat(f32::EPSILON));
+    let scale = Vec3::splat((grid - 1) as f32) / extent;
+    let mut cells = HashMap::<(i32, i32, i32), u32>::new();
+    let mut positions = Vec::new();
+    let mut indices = Vec::new();
+    let mut triangles = HashSet::<[u32; 3]>::new();
+
+    let cell_for = |p: Vec3| {
+        let q = (p - min) * scale;
+        (
+            q.x.round().clamp(0., (grid - 1) as f32) as i32,
+            q.y.round().clamp(0., (grid - 1) as f32) as i32,
+            q.z.round().clamp(0., (grid - 1) as f32) as i32,
+        )
+    };
+    for tri in mesh.indices.chunks_exact(3) {
+        let mut mapped = [0u32; 3];
+        for (slot, &source) in tri.iter().enumerate() {
+            let cell = cell_for(mesh.positions[source as usize]);
+            mapped[slot] = *cells.entry(cell).or_insert_with(|| {
+                let index = positions.len() as u32;
+                positions.push(mesh.positions[source as usize]);
+                index
+            });
+        }
+        if mapped[0] == mapped[1] || mapped[1] == mapped[2] || mapped[2] == mapped[0] {
+            continue;
+        }
+        let mut key = mapped;
+        key.sort_unstable();
+        if triangles.insert(key) {
+            indices.extend(mapped);
+        }
+    }
+    Mesh {
+        positions,
+        normals: Vec::new(),
+        uvs: Vec::new(),
+        indices,
+    }
 }
 
 fn compact(mesh: &mut Mesh) {
