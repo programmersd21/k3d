@@ -61,7 +61,7 @@ pub struct Cli {
     pub no_animation: bool,
     #[arg(long)]
     pub spin: bool,
-    #[arg(long, default_value_t = 1.0)]
+    #[arg(long, default_value_t = 0.6)]
     pub scale: f32,
     #[arg(long)]
     pub wireframe: bool,
