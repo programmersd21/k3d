@@ -1,6 +1,6 @@
 # k3d
 
-![k3d preview](assets/image.jpg)
+![k3d preview](assets/image.png)
 
 Real-time 3D models, directly in your terminal.
 
